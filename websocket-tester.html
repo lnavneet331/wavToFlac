@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Online Audio Converter</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .drop-zone {
+            border: 2px dashed #cbd5e0;
+            transition: all 0.3s ease;
+        }
+        .drop-zone:hover {
+            border-color: #4299e1;
+            background-color: #ebf8ff;
+        }
+        .status-connected {
+            background-color: #48bb78;
+        }
+        .status-disconnected {
+            background-color: #f56565;
+        }
+        .message-container {
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e0 #f7fafc;
+        }
+        .message-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .message-container::-webkit-scrollbar-track {
+            background: #f7fafc;
+        }
+        .message-container::-webkit-scrollbar-thumb {
+            background-color: #cbd5e0;
+            border-radius: 4px;
+        }
+        .animate-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <!-- Header -->
+        <div class="text-center mb-12">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Online Audio Converter</h1>
+            <p class="text-gray-600">Convert your audio files instantly using WebSocket technology</p>
+        </div>
+
+        <!-- Connection Status -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <button onclick="connect()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md transition duration-200 flex items-center">
+                        <i class="fas fa-plug mr-2"></i>
+                        Connect
+                    </button>
+                    <button onclick="disconnect()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition duration-200 flex items-center">
+                        <i class="fas fa-times mr-2"></i>
+                        Disconnect
+                    </button>
+                </div>
+                <div class="flex items-center">
+                    <div id="status-indicator" class="w-3 h-3 rounded-full status-disconnected mr-2"></div>
+                    <span id="status" class="text-gray-600 font-medium">Disconnected</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- File Upload -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div class="drop-zone p-8 rounded-lg text-center">
+                <input type="file" id="fileInput" accept="audio/*" class="hidden" onchange="handleFileSelect(event)">
+                <div class="mb-4">
+                    <i class="fas fa-cloud-upload-alt text-4xl text-gray-400"></i>
+                </div>
+                <div class="mb-4">
+                    <h3 class="text-lg font-medium text-gray-700">Drop your audio file here</h3>
+                    <p class="text-sm text-gray-500">or</p>
+                </div>
+                <button onclick="document.getElementById('fileInput').click()" class="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-md transition duration-200">
+                    Browse Files
+                </button>
+            </div>
+
+            <!-- File Preview Section -->
+            <div id="filePreview" class="hidden mt-6 p-4 bg-gray-50 rounded-lg">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <i class="fas fa-file-audio text-blue-500 text-2xl"></i>
+                        <div>
+                            <h4 id="fileName" class="font-medium text-gray-700"></h4>
+                            <p id="fileSize" class="text-sm text-gray-500"></p>
+                        </div>
+                    </div>
+                    <button onclick="clearFile()" class="text-red-500 hover:text-red-600 transition duration-200">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="mt-4">
+                <button id="convertButton" onclick="sendFile()" class="w-full bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-md transition duration-200 flex items-center justify-center opacity-50 cursor-not-allowed" disabled>
+                    <i class="fas fa-exchange-alt mr-2"></i>
+                    Convert Audio
+                </button>
+            </div>
+        </div>
+
+        <!-- Messages and Downloads -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-medium text-gray-700 mb-4">Conversion History</h3>
+            <div id="messages" class="message-container h-64 overflow-y-auto bg-gray-50 rounded-md p-4"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        const dropZone = document.querySelector('.drop-zone');
+        const fileInput = document.getElementById('fileInput');
+        const convertButton = document.getElementById('convertButton');
+        const filePreview = document.getElementById('filePreview');
+
+        // File selection handler
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                showFilePreview(file);
+                enableConvertButton();
+            }
+        }
+
+        // Show file preview
+        function showFilePreview(file) {
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = `${(file.size / 1024).toFixed(2)} KB`;
+            filePreview.classList.remove('hidden');
+            dropZone.classList.add('border-green-500');
+        }
+
+        // Clear selected file
+        function clearFile() {
+            fileInput.value = '';
+            filePreview.classList.add('hidden');
+            dropZone.classList.remove('border-green-500');
+            disableConvertButton();
+        }
+
+        // Enable convert button
+        function enableConvertButton() {
+            convertButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            convertButton.classList.add('cursor-pointer');
+            convertButton.disabled = false;
+        }
+
+        // Disable convert button
+        function disableConvertButton() {
+            convertButton.classList.add('opacity-50', 'cursor-not-allowed');
+            convertButton.classList.remove('cursor-pointer');
+            convertButton.disabled = true;
+        }
+
+        // Drag and drop handlers
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('border-blue-500', 'bg-blue-50');
+        });
+
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-blue-500', 'bg-blue-50');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-blue-500', 'bg-blue-50');
+            
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('audio/')) {
+                fileInput.files = e.dataTransfer.files;
+                showFilePreview(file);
+                enableConvertButton();
+            } else {
+                logMessage('Please upload an audio file', 'error');
+            }
+        });
+
+        function updateConnectionStatus(isConnected) {
+            const indicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status');
+            
+            if (isConnected) {
+                indicator.classList.remove('status-disconnected');
+                indicator.classList.add('status-connected');
+                statusText.textContent = 'Connected';
+            } else {
+                indicator.classList.remove('status-connected');
+                indicator.classList.add('status-disconnected');
+                statusText.textContent = 'Disconnected';
+            }
+        }
+
+        function connect() {
+            const ws = new WebSocket("ws://localhost:8080/ws/convert");
+
+            
+            ws.onopen = () => {
+                updateConnectionStatus(true);
+                logMessage('Connected to server', 'system');
+            };
+            
+            ws.onclose = () => {
+                updateConnectionStatus(false);
+                logMessage('Disconnected from server', 'system');
+            };
+            
+            ws.onmessage = async (event) => {
+                if (event.data instanceof Blob) {
+                    const blob = event.data;
+                    const originalFileName = fileInput.files[0]?.name || 'audio';
+                    const baseFileName = originalFileName.split('.')[0];
+                    const downloadFileName = `${baseFileName}_converted.flac`;
+                    
+                    const url = URL.createObjectURL(blob);
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'flex items-center justify-between bg-green-50 p-3 rounded-md mb-2';
+                    
+                    const fileInfo = document.createElement('div');
+                    fileInfo.className = 'flex items-center';
+                    fileInfo.innerHTML = `
+                        <i class="fas fa-file-audio text-green-500 mr-2"></i>
+                        <span class="text-gray-700">${downloadFileName} (${(blob.size / 1024).toFixed(2)} KB)</span>
+                    `;
+                    
+                    const downloadButton = document.createElement('a');
+                    downloadButton.href = url;
+                    downloadButton.download = downloadFileName;
+                    downloadButton.className = 'bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md transition duration-200 flex items-center';
+                    downloadButton.innerHTML = '<i class="fas fa-download mr-2"></i>Download';
+                    
+                    messageDiv.appendChild(fileInfo);
+                    messageDiv.appendChild(downloadButton);
+                    document.getElementById('messages').appendChild(messageDiv);
+                    
+                    logMessage(`✓ Conversion completed`, 'success');
+                    clearFile(); // Clear the file input after successful conversion
+                } else {
+                    logMessage(event.data, 'info');
+                }
+            };
+            
+            ws.onerror = (error) => {
+                logMessage('Error: ' + error.message, 'error');
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+        }
+
+        function sendFile() {
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                logMessage('Please select a file first', 'error');
+                return;
+            }
+
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                logMessage('Please connect to the server first', 'error');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                ws.send(e.target.result);
+                logMessage(`⬆️ Uploading: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`, 'info');
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function logMessage(message, type) {
+            const messages = document.getElementById('messages');
+            const div = document.createElement('div');
+            
+            let className = 'p-2 rounded-md mb-2 ';
+            let icon = '';
+            
+            switch(type) {
+                case 'error':
+                    className += 'bg-red-50 text-red-700';
+                    icon = '<i class="fas fa-exclamation-circle mr-2"></i>';
+                    break;
+                case 'success':
+                    className += 'bg-green-50 text-green-700';
+                    icon = '<i class="fas fa-check-circle mr-2"></i>';
+                    break;
+                case 'info':
+                    className += 'bg-blue-50 text-blue-700';
+                    icon = '<i class="fas fa-info-circle mr-2"></i>';
+                    break;
+                default:
+                    className += 'bg-gray-50 text-gray-700';
+                    icon = '<i class="fas fa-circle mr-2"></i>';
+            }
+            
+            div.className = className;
+            div.innerHTML = icon + message;
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        // Initialize convert button as disabled
+        disableConvertButton();
+    </script>
+</body>
+</html>
